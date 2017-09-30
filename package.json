@@ -1,0 +1,23 @@
+{
+  "name": "wsswitch-client-js",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FPizzetti/wsswitch-client-js.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/FPizzetti/wsswitch-client-js/issues"
+  },
+  "homepage": "https://github.com/FPizzetti/wsswitch-client-js#readme",
+  "dependencies": {
+    "uuid": "^3.1.0",
+    "websocket": "^1.0.24"
+  }
+}
