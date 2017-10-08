@@ -4,9 +4,9 @@ const uuid = require('uuid');
 
 class Client {
 
-    constructor() {
+    constructor(url = 'wss://wsswitch.com') {
         this.messageMap = {};
-        this.url = 'wss://wsswitch.com';
+        this.url = url;
         this.websocketClient = new WebsocketClient();
         this.connection = {connected: false};
         this.arMessageTimeout = 60000;
@@ -22,16 +22,20 @@ class Client {
         }
 
         return new Promise((resolve, reject) => {
-            this.websocketClient.on('connectFailed', (error) => {
+            let onConnectFail = (error) => {
+                this.websocketClient.removeListener('connect', onConnect);
                 reject(error.toString());
-            });
-            this.websocketClient.on('connect', (connection) => {
+            };
+            let onConnect = (connection) => {
                 this.connection = connection;
                 connection.on('error', this._onError.bind(this));
                 connection.on('close', this._onClose.bind(this));
                 connection.on('message', this._onMessage.bind(this));
+                this.websocketClient.removeListener('connectFailed', onConnectFail);
                 resolve();
-            });
+            };
+            this.websocketClient.once('connectFailed', onConnectFail);
+            this.websocketClient.once('connect', onConnect);
             this.websocketClient.connect(`${this.url}?login=${login}&password=${password}`);
         });
 
