@@ -5,7 +5,7 @@ const PROGRESSIVE_INTERVAL_RETRY = 'PROGRESSIVE_INTERVAL_RETRY';
 const EventEmitter = require('events');
 
 class ConnectionManager {
-    constructor(client, strategy = PROGRESSIVE_INTERVAL_RETRY, options = {}) {
+    constructor(client, strategy = MAX_TRIES, options = {}) {
         this.client = client;
         this.strategy = strategy;
         this.counter = 0;
@@ -18,6 +18,7 @@ class ConnectionManager {
         this.ee.on('disconnected', (error) => {
             setImmediate(this._execConnectionManagerStrategy.bind(this, error));
         });
+        this.strategies = {MAX_TRIES, FIXED_INTERVAL_RETRY, PROGRESSIVE_INTERVAL_RETRY};
     }
 
     connect(login, password) {
@@ -32,6 +33,41 @@ class ConnectionManager {
         }, (error) => {
             this._onDisconnect(error);
         });
+    }
+
+    getStrategies() {
+        return this.strategies;
+    }
+
+    getConnectionSummary() {
+        return {
+            counter: this.counter,
+            sequence: this.sequence,
+            lastTry: this.lastTry,
+            strategy: this.strategy,
+            options: this.options,
+            enableConsoleLog: this.enableConsoleLog
+        }
+    }
+
+    setEnableConsoleLog(enable) {
+        this.enableConsoleLog = enable;
+    }
+
+    forceReconnect() {
+        if (this.client.connection.connected) {
+            return Promise.reject('already connected');
+        } else {
+            return this._connReset();
+        }
+    }
+
+    addDisconnectedListener(cb) {
+        if (typeof cb !== 'function') {
+            throw new Error('callback must be a function');
+        }
+        this.ee.on('disconnected', cb);
+        return this.ee.removeListener.bind(this.ee, 'disconnected', cb);
     }
 
     _onDisconnect(error) {
@@ -90,7 +126,7 @@ class ConnectionManager {
         this.counter++;
         this.sequence++;
         this.lastTry = Date.now();
-        this._connect().then(() => {
+        return this._connect().then(() => {
             this.sequence = 1;
         }, (error) => {
             this._onDisconnect(error);
