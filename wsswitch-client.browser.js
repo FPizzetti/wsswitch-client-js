@@ -1,507 +1,19 @@
 (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-function EventEmitter() {
-  this._events = this._events || {};
-  this._maxListeners = this._maxListeners || undefined;
-}
-module.exports = EventEmitter;
-
-// Backwards-compat with node 0.10.x
-EventEmitter.EventEmitter = EventEmitter;
-
-EventEmitter.prototype._events = undefined;
-EventEmitter.prototype._maxListeners = undefined;
-
-// By default EventEmitters will print a warning if more than 10 listeners are
-// added to it. This is a useful default which helps finding memory leaks.
-EventEmitter.defaultMaxListeners = 10;
-
-// Obviously not all Emitters should be limited to 10. This function allows
-// that to be increased. Set to zero for unlimited.
-EventEmitter.prototype.setMaxListeners = function(n) {
-  if (!isNumber(n) || n < 0 || isNaN(n))
-    throw TypeError('n must be a positive number');
-  this._maxListeners = n;
-  return this;
-};
-
-EventEmitter.prototype.emit = function(type) {
-  var er, handler, len, args, i, listeners;
-
-  if (!this._events)
-    this._events = {};
-
-  // If there is no 'error' event listener then throw.
-  if (type === 'error') {
-    if (!this._events.error ||
-        (isObject(this._events.error) && !this._events.error.length)) {
-      er = arguments[1];
-      if (er instanceof Error) {
-        throw er; // Unhandled 'error' event
-      } else {
-        // At least give some kind of context to the user
-        var err = new Error('Uncaught, unspecified "error" event. (' + er + ')');
-        err.context = er;
-        throw err;
-      }
-    }
-  }
-
-  handler = this._events[type];
-
-  if (isUndefined(handler))
-    return false;
-
-  if (isFunction(handler)) {
-    switch (arguments.length) {
-      // fast cases
-      case 1:
-        handler.call(this);
-        break;
-      case 2:
-        handler.call(this, arguments[1]);
-        break;
-      case 3:
-        handler.call(this, arguments[1], arguments[2]);
-        break;
-      // slower
-      default:
-        args = Array.prototype.slice.call(arguments, 1);
-        handler.apply(this, args);
-    }
-  } else if (isObject(handler)) {
-    args = Array.prototype.slice.call(arguments, 1);
-    listeners = handler.slice();
-    len = listeners.length;
-    for (i = 0; i < len; i++)
-      listeners[i].apply(this, args);
-  }
-
-  return true;
-};
-
-EventEmitter.prototype.addListener = function(type, listener) {
-  var m;
-
-  if (!isFunction(listener))
-    throw TypeError('listener must be a function');
-
-  if (!this._events)
-    this._events = {};
-
-  // To avoid recursion in the case that type === "newListener"! Before
-  // adding it to the listeners, first emit "newListener".
-  if (this._events.newListener)
-    this.emit('newListener', type,
-              isFunction(listener.listener) ?
-              listener.listener : listener);
-
-  if (!this._events[type])
-    // Optimize the case of one listener. Don't need the extra array object.
-    this._events[type] = listener;
-  else if (isObject(this._events[type]))
-    // If we've already got an array, just append.
-    this._events[type].push(listener);
-  else
-    // Adding the second element, need to change to array.
-    this._events[type] = [this._events[type], listener];
-
-  // Check for listener leak
-  if (isObject(this._events[type]) && !this._events[type].warned) {
-    if (!isUndefined(this._maxListeners)) {
-      m = this._maxListeners;
-    } else {
-      m = EventEmitter.defaultMaxListeners;
-    }
-
-    if (m && m > 0 && this._events[type].length > m) {
-      this._events[type].warned = true;
-      console.error('(node) warning: possible EventEmitter memory ' +
-                    'leak detected. %d listeners added. ' +
-                    'Use emitter.setMaxListeners() to increase limit.',
-                    this._events[type].length);
-      if (typeof console.trace === 'function') {
-        // not supported in IE 10
-        console.trace();
-      }
-    }
-  }
-
-  return this;
-};
-
-EventEmitter.prototype.on = EventEmitter.prototype.addListener;
-
-EventEmitter.prototype.once = function(type, listener) {
-  if (!isFunction(listener))
-    throw TypeError('listener must be a function');
-
-  var fired = false;
-
-  function g() {
-    this.removeListener(type, g);
-
-    if (!fired) {
-      fired = true;
-      listener.apply(this, arguments);
-    }
-  }
-
-  g.listener = listener;
-  this.on(type, g);
-
-  return this;
-};
-
-// emits a 'removeListener' event iff the listener was removed
-EventEmitter.prototype.removeListener = function(type, listener) {
-  var list, position, length, i;
-
-  if (!isFunction(listener))
-    throw TypeError('listener must be a function');
-
-  if (!this._events || !this._events[type])
-    return this;
-
-  list = this._events[type];
-  length = list.length;
-  position = -1;
-
-  if (list === listener ||
-      (isFunction(list.listener) && list.listener === listener)) {
-    delete this._events[type];
-    if (this._events.removeListener)
-      this.emit('removeListener', type, listener);
-
-  } else if (isObject(list)) {
-    for (i = length; i-- > 0;) {
-      if (list[i] === listener ||
-          (list[i].listener && list[i].listener === listener)) {
-        position = i;
-        break;
-      }
-    }
-
-    if (position < 0)
-      return this;
-
-    if (list.length === 1) {
-      list.length = 0;
-      delete this._events[type];
-    } else {
-      list.splice(position, 1);
-    }
-
-    if (this._events.removeListener)
-      this.emit('removeListener', type, listener);
-  }
-
-  return this;
-};
-
-EventEmitter.prototype.removeAllListeners = function(type) {
-  var key, listeners;
-
-  if (!this._events)
-    return this;
-
-  // not listening for removeListener, no need to emit
-  if (!this._events.removeListener) {
-    if (arguments.length === 0)
-      this._events = {};
-    else if (this._events[type])
-      delete this._events[type];
-    return this;
-  }
-
-  // emit removeListener for all listeners on all events
-  if (arguments.length === 0) {
-    for (key in this._events) {
-      if (key === 'removeListener') continue;
-      this.removeAllListeners(key);
-    }
-    this.removeAllListeners('removeListener');
-    this._events = {};
-    return this;
-  }
-
-  listeners = this._events[type];
-
-  if (isFunction(listeners)) {
-    this.removeListener(type, listeners);
-  } else if (listeners) {
-    // LIFO order
-    while (listeners.length)
-      this.removeListener(type, listeners[listeners.length - 1]);
-  }
-  delete this._events[type];
-
-  return this;
-};
-
-EventEmitter.prototype.listeners = function(type) {
-  var ret;
-  if (!this._events || !this._events[type])
-    ret = [];
-  else if (isFunction(this._events[type]))
-    ret = [this._events[type]];
-  else
-    ret = this._events[type].slice();
-  return ret;
-};
-
-EventEmitter.prototype.listenerCount = function(type) {
-  if (this._events) {
-    var evlistener = this._events[type];
-
-    if (isFunction(evlistener))
-      return 1;
-    else if (evlistener)
-      return evlistener.length;
-  }
-  return 0;
-};
-
-EventEmitter.listenerCount = function(emitter, type) {
-  return emitter.listenerCount(type);
-};
-
-function isFunction(arg) {
-  return typeof arg === 'function';
-}
-
-function isNumber(arg) {
-  return typeof arg === 'number';
-}
-
-function isObject(arg) {
-  return typeof arg === 'object' && arg !== null;
-}
-
-function isUndefined(arg) {
-  return arg === void 0;
-}
-
-},{}],2:[function(require,module,exports){
-// shim for using process in browser
-var process = module.exports = {};
-
-// cached from whatever global is present so that test runners that stub it
-// don't break things.  But we need to wrap it in a try catch in case it is
-// wrapped in strict mode code which doesn't define any globals.  It's inside a
-// function because try/catches deoptimize in certain engines.
-
-var cachedSetTimeout;
-var cachedClearTimeout;
-
-function defaultSetTimout() {
-    throw new Error('setTimeout has not been defined');
-}
-function defaultClearTimeout () {
-    throw new Error('clearTimeout has not been defined');
-}
-(function () {
-    try {
-        if (typeof setTimeout === 'function') {
-            cachedSetTimeout = setTimeout;
-        } else {
-            cachedSetTimeout = defaultSetTimout;
-        }
-    } catch (e) {
-        cachedSetTimeout = defaultSetTimout;
-    }
-    try {
-        if (typeof clearTimeout === 'function') {
-            cachedClearTimeout = clearTimeout;
-        } else {
-            cachedClearTimeout = defaultClearTimeout;
-        }
-    } catch (e) {
-        cachedClearTimeout = defaultClearTimeout;
-    }
-} ())
-function runTimeout(fun) {
-    if (cachedSetTimeout === setTimeout) {
-        //normal enviroments in sane situations
-        return setTimeout(fun, 0);
-    }
-    // if setTimeout wasn't available but was latter defined
-    if ((cachedSetTimeout === defaultSetTimout || !cachedSetTimeout) && setTimeout) {
-        cachedSetTimeout = setTimeout;
-        return setTimeout(fun, 0);
-    }
-    try {
-        // when when somebody has screwed with setTimeout but no I.E. maddness
-        return cachedSetTimeout(fun, 0);
-    } catch(e){
-        try {
-            // When we are in I.E. but the script has been evaled so I.E. doesn't trust the global object when called normally
-            return cachedSetTimeout.call(null, fun, 0);
-        } catch(e){
-            // same as above but when it's a version of I.E. that must have the global object for 'this', hopfully our context correct otherwise it will throw a global error
-            return cachedSetTimeout.call(this, fun, 0);
-        }
-    }
-
-
-}
-function runClearTimeout(marker) {
-    if (cachedClearTimeout === clearTimeout) {
-        //normal enviroments in sane situations
-        return clearTimeout(marker);
-    }
-    // if clearTimeout wasn't available but was latter defined
-    if ((cachedClearTimeout === defaultClearTimeout || !cachedClearTimeout) && clearTimeout) {
-        cachedClearTimeout = clearTimeout;
-        return clearTimeout(marker);
-    }
-    try {
-        // when when somebody has screwed with setTimeout but no I.E. maddness
-        return cachedClearTimeout(marker);
-    } catch (e){
-        try {
-            // When we are in I.E. but the script has been evaled so I.E. doesn't  trust the global object when called normally
-            return cachedClearTimeout.call(null, marker);
-        } catch (e){
-            // same as above but when it's a version of I.E. that must have the global object for 'this', hopfully our context correct otherwise it will throw a global error.
-            // Some versions of I.E. have different rules for clearTimeout vs setTimeout
-            return cachedClearTimeout.call(this, marker);
-        }
-    }
-
-
-
-}
-var queue = [];
-var draining = false;
-var currentQueue;
-var queueIndex = -1;
-
-function cleanUpNextTick() {
-    if (!draining || !currentQueue) {
-        return;
-    }
-    draining = false;
-    if (currentQueue.length) {
-        queue = currentQueue.concat(queue);
-    } else {
-        queueIndex = -1;
-    }
-    if (queue.length) {
-        drainQueue();
-    }
-}
-
-function drainQueue() {
-    if (draining) {
-        return;
-    }
-    var timeout = runTimeout(cleanUpNextTick);
-    draining = true;
-
-    var len = queue.length;
-    while(len) {
-        currentQueue = queue;
-        queue = [];
-        while (++queueIndex < len) {
-            if (currentQueue) {
-                currentQueue[queueIndex].run();
-            }
-        }
-        queueIndex = -1;
-        len = queue.length;
-    }
-    currentQueue = null;
-    draining = false;
-    runClearTimeout(timeout);
-}
-
-process.nextTick = function (fun) {
-    var args = new Array(arguments.length - 1);
-    if (arguments.length > 1) {
-        for (var i = 1; i < arguments.length; i++) {
-            args[i - 1] = arguments[i];
-        }
-    }
-    queue.push(new Item(fun, args));
-    if (queue.length === 1 && !draining) {
-        runTimeout(drainQueue);
-    }
-};
-
-// v8 likes predictible objects
-function Item(fun, array) {
-    this.fun = fun;
-    this.array = array;
-}
-Item.prototype.run = function () {
-    this.fun.apply(null, this.array);
-};
-process.title = 'browser';
-process.browser = true;
-process.env = {};
-process.argv = [];
-process.version = ''; // empty string to avoid regexp issues
-process.versions = {};
-
-function noop() {}
-
-process.on = noop;
-process.addListener = noop;
-process.once = noop;
-process.off = noop;
-process.removeListener = noop;
-process.removeAllListeners = noop;
-process.emit = noop;
-process.prependListener = noop;
-process.prependOnceListener = noop;
-
-process.listeners = function (name) { return [] }
-
-process.binding = function (name) {
-    throw new Error('process.binding is not supported');
-};
-
-process.cwd = function () { return '/' };
-process.chdir = function (dir) {
-    throw new Error('process.chdir is not supported');
-};
-process.umask = function() { return 0; };
-
-},{}],3:[function(require,module,exports){
-const WebsocketClient = require('websocket').client;
+const WebsocketClient = require('websocket');
 const Message = require('./Message');
 const uuid = require('uuid');
 
 class Client {
 
     constructor(url = 'wss://wsswitch.com') {
+        this.type = WebsocketClient.client ? 'node' : 'web';
+        let WSC = WebsocketClient.client || WebsocketClient.w3cwebsocket;
         this.messageMap = {};
         this.url = url;
-        this.websocketClient = new WebsocketClient();
+        this.websocketClient = this.type === 'node' ? new WSC() : WSC;
         this.connection = {connected: false};
         this.arMessageTimeout = 60000;
-        this.ffMessageTimeout = 500;
+        this.ffMessageTimeout = 2000;
         this.onMessageCallback = null;
         this.onErrorCallback = null;
         this.onCloseCallback = null;
@@ -512,22 +24,48 @@ class Client {
             throw 'missing login or password';
         }
 
+        let WSC = this.websocketClient;
+
         return new Promise((resolve, reject) => {
             let onConnectFail = (error) => {
-                this.websocketClient.removeListener('connect', onConnect);
+                if (this.type === 'node') {
+                    this.websocketClient.removeListener('connect', onConnect);
+                } else {
+                    this.websocketClient = WSC;
+                    this.connection.connected = false;
+                }
                 reject(error.toString());
             };
             let onConnect = (connection) => {
                 this.connection = connection;
-                connection.on('error', this._onError.bind(this));
                 connection.on('close', this._onClose.bind(this));
                 connection.on('message', this._onMessage.bind(this));
-                this.websocketClient.removeListener('connectFailed', onConnectFail);
-                resolve();
+                if (this.type === 'node') {
+                    connection.on('error', this._onError.bind(this));
+                    this.websocketClient.removeListener('connectFailed', onConnectFail);
+                    resolve();
+                } else {
+                    connection.on('error', onConnectFail);
+                    connection.on('open', resolve);
+                    this.connection.connected = true;
+                    this.connection.sendUTF = this.websocketClient.send;
+                }
             };
-            this.websocketClient.once('connectFailed', onConnectFail);
-            this.websocketClient.once('connect', onConnect);
-            this.websocketClient.connect(`${this.url}?login=${login}&password=${password}`);
+            if (this.type === 'node') {
+                this.websocketClient.once('connectFailed', onConnectFail);
+                this.websocketClient.once('connect', onConnect);
+                this.websocketClient.connect(`${this.url}?login=${login}&password=${password}`);
+            } else {
+                try {
+                    this.websocketClient = new this.websocketClient(`${this.url}?login=${login}&password=${password}`);
+                    this.websocketClient.on = (event, cb) => {
+                        this.websocketClient[`on${event}`] = cb;
+                    };
+                    onConnect(this.websocketClient);
+                } catch (e) {
+                    onConnectFail(e);
+                }
+            }
         });
 
     }
@@ -585,8 +123,8 @@ class Client {
 
     rejectAllPendingMessages() {
         let messageMap = Object.assign({}, this.messageMap);
-        for(let ref in messageMap) {
-            if(messageMap.hasOwnProperty(ref)) {
+        for (let ref in messageMap) {
+            if (messageMap.hasOwnProperty(ref)) {
                 let m = messageMap[ref];
                 m.reject('forced rejection by client');
                 delete this.messageMap[ref];
@@ -596,8 +134,8 @@ class Client {
 
     resolveAllPendingMessages() {
         let messageMap = Object.assign({}, this.messageMap);
-        for(let ref in messageMap) {
-            if(messageMap.hasOwnProperty(ref)) {
+        for (let ref in messageMap) {
+            if (messageMap.hasOwnProperty(ref)) {
                 let m = messageMap[ref];
                 m.resolve('forced resolution by client');
                 delete this.messageMap[ref];
@@ -622,24 +160,34 @@ class Client {
     }
 
     _onError(error) {
+        if (this.type !== 'node') {
+            this.connection.connected = false;
+        }
         if (this.onErrorCallback) {
             this.onErrorCallback(error);
         }
     }
 
     _onClose() {
+        if (this.type !== 'node') {
+            this.connection.connected = false;
+        }
         if (this.onCloseCallback) {
             this.onCloseCallback();
         }
     }
 
     _onMessage(message) {
-        if(message.type === 'utf8') {
-            message = message.utf8Data;
+        if (this.type === 'node') {
+            if (message.type === 'utf8') {
+                message = message.utf8Data;
+            } else {
+                console.error('unsupported message format');
+                console.error(message);
+                return;
+            }
         } else {
-            console.error('unsupported message format');
-            console.error(message);
-            return;
+            message = message.data;
         }
         let err = message.match(/^ERROR:(.*):(.*)$/);
         if (err) {
@@ -647,8 +195,10 @@ class Client {
             let payload = err[2];
             if (ref) {
                 let m = this.messageMap[ref];
-                clearTimeout(m.timeoutId);
-                m.reject(payload);
+                if (m) {
+                    clearTimeout(m.timeoutId);
+                    m.reject(payload);
+                }
             }
             return;
         }
@@ -657,8 +207,10 @@ class Client {
             let ref = err[1];
             if (ref) {
                 let m = this.messageMap[ref];
-                clearTimeout(m.timeoutId);
-                m.resolve();
+                if (m) {
+                    clearTimeout(m.timeoutId);
+                    m.resolve();
+                }
             }
             return;
         }
@@ -677,16 +229,22 @@ class Client {
 }
 
 module.exports = Client;
-},{"./Message":5,"uuid":7,"websocket":12}],4:[function(require,module,exports){
-(function (process){
+},{"./Message":3,"uuid":5,"websocket":10}],2:[function(require,module,exports){
 const MAX_TRIES = 'MAX_TRIES';
 const FIXED_INTERVAL_RETRY = 'FIXED_INTERVAL_RETRY';
 const PROGRESSIVE_INTERVAL_RETRY = 'PROGRESSIVE_INTERVAL_RETRY';
 
-const EventEmitter = require('events');
+const Client = require('./Client');
 
 class ConnectionManager {
     constructor(client, strategy = MAX_TRIES, options = {}) {
+        if (!(client instanceof Client)) {
+            throw new Error('client must be an instance of Client class');
+        }
+        this.strategies = ConnectionManager.getStrategies();
+        if (Object.keys(this.strategies).indexOf(strategy) < 0) {
+            throw new Error('invalid strategy');
+        }
         this.client = client;
         this.strategy = strategy;
         this.counter = 0;
@@ -695,11 +253,7 @@ class ConnectionManager {
         this._connect = null;
         this.options = options;
         this.enableConsoleLog = false;
-        this.ee = new EventEmitter();
-        this.ee.on('disconnected', (error) => {
-            setImmediate(this._execConnectionManagerStrategy.bind(this, error));
-        });
-        this.strategies = {MAX_TRIES, FIXED_INTERVAL_RETRY, PROGRESSIVE_INTERVAL_RETRY};
+        this.onDisconnect = null;
     }
 
     connect(login, password) {
@@ -707,17 +261,21 @@ class ConnectionManager {
         this.counter++;
         this.sequence++;
         this.lastTry = Date.now();
-        this.client.on('error', this._onDisconnect);
-        this.client.on('close', this._onDisconnect);
-        this._connect().then(() => {
+        this.client.on('error', this._onDisconnect.bind(this));
+        if (this.client.type === 'node') {
+            this.client.on('close', this._onDisconnect.bind(this));
+        }
+        return this._connect().then(() => {
             this.sequence = 1;
         }, (error) => {
             this._onDisconnect(error);
+            throw error;
         });
     }
 
-    getStrategies() {
-        return this.strategies;
+    static getStrategies() {
+        return {MAX_TRIES, FIXED_INTERVAL_RETRY, PROGRESSIVE_INTERVAL_RETRY};
+
     }
 
     getConnectionSummary() {
@@ -743,17 +301,13 @@ class ConnectionManager {
         }
     }
 
-    addDisconnectedListener(cb) {
+    setDisconnectedListener(cb) {
         if (typeof cb !== 'function') {
             throw new Error('callback must be a function');
         }
-        this.ee.on('disconnected', cb);
-        return this.ee.removeListener.bind(this.ee, 'disconnected', cb);
+        this.onDisconnect = cb;
     }
 
-    _onDisconnect(error) {
-        this.ee.emit('disconnected', error);
-    }
 
     _execConnectionManagerStrategy(error) {
         switch (this.strategy) {
@@ -763,6 +317,15 @@ class ConnectionManager {
                 return this._fixedIntervalRetry(error);
             case PROGRESSIVE_INTERVAL_RETRY:
                 return this._progressiveIntervalRetry(error);
+        }
+    }
+
+    _onDisconnect(error) {
+        if (this._execConnectionManagerStrategy) {
+            setTimeout(this._execConnectionManagerStrategy.bind(this, error));
+        }
+        if (this.onDisconnect) {
+            setTimeout(this.onDisconnect.bind(this, error));
         }
     }
 
@@ -811,12 +374,13 @@ class ConnectionManager {
             this.sequence = 1;
         }, (error) => {
             this._onDisconnect(error);
+            throw error;
         });
     }
 
     _logError(error) {
         if (this.enableConsoleLog) {
-            console.error(error, process.memoryUsage());
+            console.error(error);
         }
     }
 
@@ -829,8 +393,7 @@ class ConnectionManager {
 }
 
 module.exports = ConnectionManager;
-}).call(this,require('_process'))
-},{"_process":2,"events":1}],5:[function(require,module,exports){
+},{"./Client":1}],3:[function(require,module,exports){
 class Message {
 
     constructor(destination, payload, options = {}) {
@@ -852,7 +415,7 @@ class Message {
 }
 
 module.exports = Message;
-},{}],6:[function(require,module,exports){
+},{}],4:[function(require,module,exports){
 const Client = require('./Client');
 const Message = require('./Message');
 const ConnectionManager = require('./ConnectionManager');
@@ -868,7 +431,7 @@ if (window) {
 exports.Client = Client;
 exports.Message = Message;
 exports.ConnectionManager = ConnectionManager;
-},{"./Client":3,"./ConnectionManager":4,"./Message":5}],7:[function(require,module,exports){
+},{"./Client":1,"./ConnectionManager":2,"./Message":3}],5:[function(require,module,exports){
 var v1 = require('./v1');
 var v4 = require('./v4');
 
@@ -878,7 +441,7 @@ uuid.v4 = v4;
 
 module.exports = uuid;
 
-},{"./v1":10,"./v4":11}],8:[function(require,module,exports){
+},{"./v1":8,"./v4":9}],6:[function(require,module,exports){
 /**
  * Convert array of 16 byte values to UUID string format of the form:
  * XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
@@ -903,7 +466,7 @@ function bytesToUuid(buf, offset) {
 
 module.exports = bytesToUuid;
 
-},{}],9:[function(require,module,exports){
+},{}],7:[function(require,module,exports){
 (function (global){
 // Unique ID creation requires a high quality random # generator.  In the
 // browser this is a little complicated due to unknown quality of Math.random()
@@ -940,7 +503,7 @@ if (!rng) {
 module.exports = rng;
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],10:[function(require,module,exports){
+},{}],8:[function(require,module,exports){
 var rng = require('./lib/rng');
 var bytesToUuid = require('./lib/bytesToUuid');
 
@@ -1042,7 +605,7 @@ function v1(options, buf, offset) {
 
 module.exports = v1;
 
-},{"./lib/bytesToUuid":8,"./lib/rng":9}],11:[function(require,module,exports){
+},{"./lib/bytesToUuid":6,"./lib/rng":7}],9:[function(require,module,exports){
 var rng = require('./lib/rng');
 var bytesToUuid = require('./lib/bytesToUuid');
 
@@ -1073,7 +636,7 @@ function v4(options, buf, offset) {
 
 module.exports = v4;
 
-},{"./lib/bytesToUuid":8,"./lib/rng":9}],12:[function(require,module,exports){
+},{"./lib/bytesToUuid":6,"./lib/rng":7}],10:[function(require,module,exports){
 var _global = (function() { return this; })();
 var NativeWebSocket = _global.WebSocket || _global.MozWebSocket;
 var websocket_version = require('./version');
@@ -1111,28 +674,29 @@ module.exports = {
     'version'      : websocket_version
 };
 
-},{"./version":13}],13:[function(require,module,exports){
+},{"./version":11}],11:[function(require,module,exports){
 module.exports = require('../package.json').version;
 
-},{"../package.json":14}],14:[function(require,module,exports){
+},{"../package.json":12}],12:[function(require,module,exports){
 module.exports={
   "_args": [
     [
       {
-        "raw": "websocket@^1.0.24",
+        "raw": "websocket",
         "scope": null,
         "escapedName": "websocket",
         "name": "websocket",
-        "rawSpec": "^1.0.24",
-        "spec": ">=1.0.24 <2.0.0",
-        "type": "range"
+        "rawSpec": "",
+        "spec": "latest",
+        "type": "tag"
       },
-      "C:\\other\\wsswitch-client-js"
+      "/Users/murilo/WebstormProjects/wsswitch-client-js"
     ]
   ],
-  "_from": "websocket@>=1.0.24 <2.0.0",
+  "_from": "websocket@latest",
   "_id": "websocket@1.0.24",
   "_inCache": true,
+  "_installable": true,
   "_location": "/websocket",
   "_nodeVersion": "7.3.0",
   "_npmOperationalInternal": {
@@ -1146,22 +710,23 @@ module.exports={
   "_npmVersion": "3.10.10",
   "_phantomChildren": {},
   "_requested": {
-    "raw": "websocket@^1.0.24",
+    "raw": "websocket",
     "scope": null,
     "escapedName": "websocket",
     "name": "websocket",
-    "rawSpec": "^1.0.24",
-    "spec": ">=1.0.24 <2.0.0",
-    "type": "range"
+    "rawSpec": "",
+    "spec": "latest",
+    "type": "tag"
   },
   "_requiredBy": [
+    "#USER",
     "/"
   ],
   "_resolved": "https://registry.npmjs.org/websocket/-/websocket-1.0.24.tgz",
   "_shasum": "74903e75f2545b6b2e1de1425bc1c905917a1890",
   "_shrinkwrap": null,
-  "_spec": "websocket@^1.0.24",
-  "_where": "C:\\other\\wsswitch-client-js",
+  "_spec": "websocket",
+  "_where": "/Users/murilo/WebstormProjects/wsswitch-client-js",
   "author": {
     "name": "Brian McKelvey",
     "email": "brian@worlize.com",
@@ -1244,4 +809,4 @@ module.exports={
   "version": "1.0.24"
 }
 
-},{}]},{},[6]);
+},{}]},{},[4]);

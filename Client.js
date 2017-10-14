@@ -1,16 +1,18 @@
-const WebsocketClient = require('websocket').client;
+const WebsocketClient = require('websocket');
 const Message = require('./Message');
 const uuid = require('uuid');
 
 class Client {
 
     constructor(url = 'wss://wsswitch.com') {
+        this.type = WebsocketClient.client ? 'node' : 'web';
+        let WSC = WebsocketClient.client || WebsocketClient.w3cwebsocket;
         this.messageMap = {};
         this.url = url;
-        this.websocketClient = new WebsocketClient();
+        this.websocketClient = this.type === 'node' ? new WSC() : WSC;
         this.connection = {connected: false};
         this.arMessageTimeout = 60000;
-        this.ffMessageTimeout = 500;
+        this.ffMessageTimeout = 2000;
         this.onMessageCallback = null;
         this.onErrorCallback = null;
         this.onCloseCallback = null;
@@ -21,22 +23,48 @@ class Client {
             throw 'missing login or password';
         }
 
+        let WSC = this.websocketClient;
+
         return new Promise((resolve, reject) => {
             let onConnectFail = (error) => {
-                this.websocketClient.removeListener('connect', onConnect);
+                if (this.type === 'node') {
+                    this.websocketClient.removeListener('connect', onConnect);
+                } else {
+                    this.websocketClient = WSC;
+                    this.connection.connected = false;
+                }
                 reject(error.toString());
             };
             let onConnect = (connection) => {
                 this.connection = connection;
-                connection.on('error', this._onError.bind(this));
                 connection.on('close', this._onClose.bind(this));
                 connection.on('message', this._onMessage.bind(this));
-                this.websocketClient.removeListener('connectFailed', onConnectFail);
-                resolve();
+                if (this.type === 'node') {
+                    connection.on('error', this._onError.bind(this));
+                    this.websocketClient.removeListener('connectFailed', onConnectFail);
+                    resolve();
+                } else {
+                    connection.on('error', onConnectFail);
+                    connection.on('open', resolve);
+                    this.connection.connected = true;
+                    this.connection.sendUTF = this.websocketClient.send;
+                }
             };
-            this.websocketClient.once('connectFailed', onConnectFail);
-            this.websocketClient.once('connect', onConnect);
-            this.websocketClient.connect(`${this.url}?login=${login}&password=${password}`);
+            if (this.type === 'node') {
+                this.websocketClient.once('connectFailed', onConnectFail);
+                this.websocketClient.once('connect', onConnect);
+                this.websocketClient.connect(`${this.url}?login=${login}&password=${password}`);
+            } else {
+                try {
+                    this.websocketClient = new this.websocketClient(`${this.url}?login=${login}&password=${password}`);
+                    this.websocketClient.on = (event, cb) => {
+                        this.websocketClient[`on${event}`] = cb;
+                    };
+                    onConnect(this.websocketClient);
+                } catch (e) {
+                    onConnectFail(e);
+                }
+            }
         });
 
     }
@@ -94,8 +122,8 @@ class Client {
 
     rejectAllPendingMessages() {
         let messageMap = Object.assign({}, this.messageMap);
-        for(let ref in messageMap) {
-            if(messageMap.hasOwnProperty(ref)) {
+        for (let ref in messageMap) {
+            if (messageMap.hasOwnProperty(ref)) {
                 let m = messageMap[ref];
                 m.reject('forced rejection by client');
                 delete this.messageMap[ref];
@@ -105,8 +133,8 @@ class Client {
 
     resolveAllPendingMessages() {
         let messageMap = Object.assign({}, this.messageMap);
-        for(let ref in messageMap) {
-            if(messageMap.hasOwnProperty(ref)) {
+        for (let ref in messageMap) {
+            if (messageMap.hasOwnProperty(ref)) {
                 let m = messageMap[ref];
                 m.resolve('forced resolution by client');
                 delete this.messageMap[ref];
@@ -131,24 +159,34 @@ class Client {
     }
 
     _onError(error) {
+        if (this.type !== 'node') {
+            this.connection.connected = false;
+        }
         if (this.onErrorCallback) {
             this.onErrorCallback(error);
         }
     }
 
     _onClose() {
+        if (this.type !== 'node') {
+            this.connection.connected = false;
+        }
         if (this.onCloseCallback) {
             this.onCloseCallback();
         }
     }
 
     _onMessage(message) {
-        if(message.type === 'utf8') {
-            message = message.utf8Data;
+        if (this.type === 'node') {
+            if (message.type === 'utf8') {
+                message = message.utf8Data;
+            } else {
+                console.error('unsupported message format');
+                console.error(message);
+                return;
+            }
         } else {
-            console.error('unsupported message format');
-            console.error(message);
-            return;
+            message = message.data;
         }
         let err = message.match(/^ERROR:(.*):(.*)$/);
         if (err) {
@@ -156,8 +194,10 @@ class Client {
             let payload = err[2];
             if (ref) {
                 let m = this.messageMap[ref];
-                clearTimeout(m.timeoutId);
-                m.reject(payload);
+                if (m) {
+                    clearTimeout(m.timeoutId);
+                    m.reject(payload);
+                }
             }
             return;
         }
@@ -166,8 +206,10 @@ class Client {
             let ref = err[1];
             if (ref) {
                 let m = this.messageMap[ref];
-                clearTimeout(m.timeoutId);
-                m.resolve();
+                if (m) {
+                    clearTimeout(m.timeoutId);
+                    m.resolve();
+                }
             }
             return;
         }

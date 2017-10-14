@@ -2,10 +2,17 @@ const MAX_TRIES = 'MAX_TRIES';
 const FIXED_INTERVAL_RETRY = 'FIXED_INTERVAL_RETRY';
 const PROGRESSIVE_INTERVAL_RETRY = 'PROGRESSIVE_INTERVAL_RETRY';
 
-const EventEmitter = require('events');
+const Client = require('./Client');
 
 class ConnectionManager {
     constructor(client, strategy = MAX_TRIES, options = {}) {
+        if (!(client instanceof Client)) {
+            throw new Error('client must be an instance of Client class');
+        }
+        this.strategies = ConnectionManager.getStrategies();
+        if (Object.keys(this.strategies).indexOf(strategy) < 0) {
+            throw new Error('invalid strategy');
+        }
         this.client = client;
         this.strategy = strategy;
         this.counter = 0;
@@ -14,11 +21,7 @@ class ConnectionManager {
         this._connect = null;
         this.options = options;
         this.enableConsoleLog = false;
-        this.ee = new EventEmitter();
-        this.ee.on('disconnected', (error) => {
-            setImmediate(this._execConnectionManagerStrategy.bind(this, error));
-        });
-        this.strategies = {MAX_TRIES, FIXED_INTERVAL_RETRY, PROGRESSIVE_INTERVAL_RETRY};
+        this.onDisconnect = null;
     }
 
     connect(login, password) {
@@ -26,17 +29,21 @@ class ConnectionManager {
         this.counter++;
         this.sequence++;
         this.lastTry = Date.now();
-        this.client.on('error', this._onDisconnect);
-        this.client.on('close', this._onDisconnect);
-        this._connect().then(() => {
+        this.client.on('error', this._onDisconnect.bind(this));
+        if (this.client.type === 'node') {
+            this.client.on('close', this._onDisconnect.bind(this));
+        }
+        return this._connect().then(() => {
             this.sequence = 1;
         }, (error) => {
             this._onDisconnect(error);
+            throw error;
         });
     }
 
-    getStrategies() {
-        return this.strategies;
+    static getStrategies() {
+        return {MAX_TRIES, FIXED_INTERVAL_RETRY, PROGRESSIVE_INTERVAL_RETRY};
+
     }
 
     getConnectionSummary() {
@@ -62,17 +69,13 @@ class ConnectionManager {
         }
     }
 
-    addDisconnectedListener(cb) {
+    setDisconnectedListener(cb) {
         if (typeof cb !== 'function') {
             throw new Error('callback must be a function');
         }
-        this.ee.on('disconnected', cb);
-        return this.ee.removeListener.bind(this.ee, 'disconnected', cb);
+        this.onDisconnect = cb;
     }
 
-    _onDisconnect(error) {
-        this.ee.emit('disconnected', error);
-    }
 
     _execConnectionManagerStrategy(error) {
         switch (this.strategy) {
@@ -82,6 +85,15 @@ class ConnectionManager {
                 return this._fixedIntervalRetry(error);
             case PROGRESSIVE_INTERVAL_RETRY:
                 return this._progressiveIntervalRetry(error);
+        }
+    }
+
+    _onDisconnect(error) {
+        if (this._execConnectionManagerStrategy) {
+            setTimeout(this._execConnectionManagerStrategy.bind(this, error));
+        }
+        if (this.onDisconnect) {
+            setTimeout(this.onDisconnect.bind(this, error));
         }
     }
 
@@ -130,12 +142,13 @@ class ConnectionManager {
             this.sequence = 1;
         }, (error) => {
             this._onDisconnect(error);
+            throw error;
         });
     }
 
     _logError(error) {
         if (this.enableConsoleLog) {
-            console.error(error, process.memoryUsage());
+            console.error(error);
         }
     }
 
