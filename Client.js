@@ -20,7 +20,11 @@ class Client {
 
     connect(login, password) {
         if (!login || !password) {
-            throw 'missing login or password';
+            throw new Error('missing login or password');
+        }
+
+        if(this.connection.connected) {
+            throw new Error('already connected');
         }
 
         let WSC = this.websocketClient;
@@ -33,11 +37,11 @@ class Client {
                     this.websocketClient = WSC;
                     this.connection.connected = false;
                 }
-                reject(error.toString());
+                reject(error ? error.toString(): null);
             };
             let onConnect = (connection) => {
                 this.connection = connection;
-                connection.on('close', this._onClose.bind(this));
+                connection.on('close', this._onClose.bind(this, onConnectFail));
                 connection.on('message', this._onMessage.bind(this));
                 if (this.type === 'node') {
                     connection.on('error', this._onError.bind(this));
@@ -167,9 +171,9 @@ class Client {
         }
     }
 
-    _onClose() {
+    _onClose(onConnectionFail) {
         if (this.type !== 'node') {
-            this.connection.connected = false;
+            onConnectionFail();
         }
         if (this.onCloseCallback) {
             this.onCloseCallback();
@@ -203,7 +207,7 @@ class Client {
         }
         let ack = message.match(/^ACK:(.*)$/);
         if (ack) {
-            let ref = err[1];
+            let ref = ack[1];
             if (ref) {
                 let m = this.messageMap[ref];
                 if (m) {
