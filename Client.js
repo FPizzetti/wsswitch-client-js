@@ -18,6 +18,18 @@ class Client {
         this.onCloseCallback = null;
     }
 
+    disconnect() {
+        if(!this.connection.connected) {
+            throw new Error('already disconnected');
+        }
+
+        if (this.type === 'node') {
+            this.connection.close();
+        } else {
+            this.websocketClient.close();
+        }
+    }
+
     connect(login, password) {
         if (!login || !password) {
             throw new Error('missing login or password');

@@ -1,4 +1,4 @@
-(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
+(function(){function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s}return e})()({1:[function(require,module,exports){
 const WebsocketClient = require('websocket');
 const Message = require('./Message');
 const uuid = require('uuid');
@@ -17,6 +17,18 @@ class Client {
         this.onMessageCallback = null;
         this.onErrorCallback = null;
         this.onCloseCallback = null;
+    }
+
+    disconnect() {
+        if(!this.connection.connected) {
+            throw new Error('already disconnected');
+        }
+
+        if (this.type === 'node') {
+            this.connection.close();
+        } else {
+            this.websocketClient.close();
+        }
     }
 
     connect(login, password) {
@@ -471,30 +483,30 @@ function bytesToUuid(buf, offset) {
 module.exports = bytesToUuid;
 
 },{}],7:[function(require,module,exports){
-(function (global){
 // Unique ID creation requires a high quality random # generator.  In the
 // browser this is a little complicated due to unknown quality of Math.random()
 // and inconsistent support for the `crypto` API.  We do the best we can via
 // feature-detection
-var rng;
 
-var crypto = global.crypto || global.msCrypto; // for IE 11
-if (crypto && crypto.getRandomValues) {
+// getRandomValues needs to be invoked in a context where "this" is a Crypto implementation.
+var getRandomValues = (typeof(crypto) != 'undefined' && crypto.getRandomValues.bind(crypto)) ||
+                      (typeof(msCrypto) != 'undefined' && msCrypto.getRandomValues.bind(msCrypto));
+if (getRandomValues) {
   // WHATWG crypto RNG - http://wiki.whatwg.org/wiki/Crypto
   var rnds8 = new Uint8Array(16); // eslint-disable-line no-undef
-  rng = function whatwgRNG() {
-    crypto.getRandomValues(rnds8);
+
+  module.exports = function whatwgRNG() {
+    getRandomValues(rnds8);
     return rnds8;
   };
-}
-
-if (!rng) {
+} else {
   // Math.random()-based (RNG)
   //
   // If all else fails, use Math.random().  It's fast, but is of unspecified
   // quality.
   var rnds = new Array(16);
-  rng = function() {
+
+  module.exports = function mathRNG() {
     for (var i = 0, r; i < 16; i++) {
       if ((i & 0x03) === 0) r = Math.random() * 0x100000000;
       rnds[i] = r >>> ((i & 0x03) << 3) & 0xff;
@@ -504,9 +516,6 @@ if (!rng) {
   };
 }
 
-module.exports = rng;
-
-}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
 },{}],8:[function(require,module,exports){
 var rng = require('./lib/rng');
 var bytesToUuid = require('./lib/bytesToUuid');
@@ -516,20 +525,12 @@ var bytesToUuid = require('./lib/bytesToUuid');
 // Inspired by https://github.com/LiosK/UUID.js
 // and http://docs.python.org/library/uuid.html
 
-// random #'s we need to init node and clockseq
-var _seedBytes = rng();
-
-// Per 4.5, create and 48-bit node id, (47 random bits + multicast bit = 1)
-var _nodeId = [
-  _seedBytes[0] | 0x01,
-  _seedBytes[1], _seedBytes[2], _seedBytes[3], _seedBytes[4], _seedBytes[5]
-];
-
-// Per 4.2.2, randomize (14 bit) clockseq
-var _clockseq = (_seedBytes[6] << 8 | _seedBytes[7]) & 0x3fff;
+var _nodeId;
+var _clockseq;
 
 // Previous uuid creation time
-var _lastMSecs = 0, _lastNSecs = 0;
+var _lastMSecs = 0;
+var _lastNSecs = 0;
 
 // See https://github.com/broofa/node-uuid for API details
 function v1(options, buf, offset) {
@@ -537,8 +538,26 @@ function v1(options, buf, offset) {
   var b = buf || [];
 
   options = options || {};
-
+  var node = options.node || _nodeId;
   var clockseq = options.clockseq !== undefined ? options.clockseq : _clockseq;
+
+  // node and clockseq need to be initialized to random values if they're not
+  // specified.  We do this lazily to minimize issues related to insufficient
+  // system entropy.  See #189
+  if (node == null || clockseq == null) {
+    var seedBytes = rng();
+    if (node == null) {
+      // Per 4.5, create and 48-bit node id, (47 random bits + multicast bit = 1)
+      node = _nodeId = [
+        seedBytes[0] | 0x01,
+        seedBytes[1], seedBytes[2], seedBytes[3], seedBytes[4], seedBytes[5]
+      ];
+    }
+    if (clockseq == null) {
+      // Per 4.2.2, randomize (14 bit) clockseq
+      clockseq = _clockseq = (seedBytes[6] << 8 | seedBytes[7]) & 0x3fff;
+    }
+  }
 
   // UUID timestamps are 100 nano-second units since the Gregorian epoch,
   // (1582-10-15 00:00).  JSNumbers aren't precise enough for this, so
@@ -599,7 +618,6 @@ function v1(options, buf, offset) {
   b[i++] = clockseq & 0xff;
 
   // `node`
-  var node = options.node || _nodeId;
   for (var n = 0; n < 6; ++n) {
     b[i + n] = node[n];
   }
@@ -617,7 +635,7 @@ function v4(options, buf, offset) {
   var i = buf && offset || 0;
 
   if (typeof(options) == 'string') {
-    buf = options == 'binary' ? new Array(16) : null;
+    buf = options === 'binary' ? new Array(16) : null;
     options = null;
   }
   options = options || {};
@@ -668,7 +686,13 @@ function W3CWebSocket(uri, protocols) {
 	 */
 	return native_instance;
 }
-
+if (NativeWebSocket) {
+	['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'].forEach(function(prop) {
+		Object.defineProperty(W3CWebSocket, prop, {
+			get: function() { return NativeWebSocket[prop]; }
+		});
+	});
+}
 
 /**
  * Module exports.
@@ -683,54 +707,29 @@ module.exports = require('../package.json').version;
 
 },{"../package.json":12}],12:[function(require,module,exports){
 module.exports={
-  "_args": [
-    [
-      {
-        "raw": "websocket",
-        "scope": null,
-        "escapedName": "websocket",
-        "name": "websocket",
-        "rawSpec": "",
-        "spec": "latest",
-        "type": "tag"
-      },
-      "/Users/murilo/WebstormProjects/wsswitch-client-js"
-    ]
-  ],
-  "_from": "websocket@latest",
-  "_id": "websocket@1.0.24",
-  "_inCache": true,
-  "_installable": true,
+  "_from": "websocket@^1.0.24",
+  "_id": "websocket@1.0.25",
+  "_inBundle": false,
+  "_integrity": "sha512-M58njvi6ZxVb5k7kpnHh2BvNKuBWiwIYvsToErBzWhvBZYwlEiLcyLrG41T1jRcrY9ettqPYEqduLI7ul54CVQ==",
   "_location": "/websocket",
-  "_nodeVersion": "7.3.0",
-  "_npmOperationalInternal": {
-    "host": "packages-12-west.internal.npmjs.com",
-    "tmp": "tmp/websocket-1.0.24.tgz_1482977757939_0.1858439394272864"
-  },
-  "_npmUser": {
-    "name": "theturtle32",
-    "email": "brian@worlize.com"
-  },
-  "_npmVersion": "3.10.10",
   "_phantomChildren": {},
   "_requested": {
-    "raw": "websocket",
-    "scope": null,
-    "escapedName": "websocket",
+    "type": "range",
+    "registry": true,
+    "raw": "websocket@^1.0.24",
     "name": "websocket",
-    "rawSpec": "",
-    "spec": "latest",
-    "type": "tag"
+    "escapedName": "websocket",
+    "rawSpec": "^1.0.24",
+    "saveSpec": null,
+    "fetchSpec": "^1.0.24"
   },
   "_requiredBy": [
-    "#USER",
     "/"
   ],
-  "_resolved": "https://registry.npmjs.org/websocket/-/websocket-1.0.24.tgz",
-  "_shasum": "74903e75f2545b6b2e1de1425bc1c905917a1890",
-  "_shrinkwrap": null,
-  "_spec": "websocket",
-  "_where": "/Users/murilo/WebstormProjects/wsswitch-client-js",
+  "_resolved": "https://registry.npmjs.org/websocket/-/websocket-1.0.25.tgz",
+  "_shasum": "998ec790f0a3eacb8b08b50a4350026692a11958",
+  "_spec": "websocket@^1.0.24",
+  "_where": "C:\\tunts\\wsswitch-client-js",
   "author": {
     "name": "Brian McKelvey",
     "email": "brian@worlize.com",
@@ -740,6 +739,7 @@ module.exports={
   "bugs": {
     "url": "https://github.com/theturtle32/WebSocket-Node/issues"
   },
+  "bundleDependencies": false,
   "config": {
     "verbose": false
   },
@@ -756,6 +756,7 @@ module.exports={
     "typedarray-to-buffer": "^3.1.2",
     "yaeti": "^0.0.6"
   },
+  "deprecated": false,
   "description": "Websocket Client & Server Library implementing the WebSocket protocol as specified in RFC 6455.",
   "devDependencies": {
     "buffer-equal": "^1.0.0",
@@ -769,14 +770,9 @@ module.exports={
   "directories": {
     "lib": "./lib"
   },
-  "dist": {
-    "shasum": "74903e75f2545b6b2e1de1425bc1c905917a1890",
-    "tarball": "https://registry.npmjs.org/websocket/-/websocket-1.0.24.tgz"
-  },
   "engines": {
-    "node": ">=0.8.0"
+    "node": ">=0.10.0"
   },
-  "gitHead": "0e15f9445953927c39ce84a232cb7dd6e3adf12e",
   "homepage": "https://github.com/theturtle32/WebSocket-Node",
   "keywords": [
     "websocket",
@@ -792,15 +788,7 @@ module.exports={
   ],
   "license": "Apache-2.0",
   "main": "index",
-  "maintainers": [
-    {
-      "name": "theturtle32",
-      "email": "brian@worlize.com"
-    }
-  ],
   "name": "websocket",
-  "optionalDependencies": {},
-  "readme": "ERROR: No README data found!",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/theturtle32/WebSocket-Node.git"
@@ -810,7 +798,7 @@ module.exports={
     "install": "(node-gyp rebuild 2> builderror.log) || (exit 0)",
     "test": "faucet test/unit"
   },
-  "version": "1.0.24"
+  "version": "1.0.25"
 }
 
 },{}]},{},[4]);
