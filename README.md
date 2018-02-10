@@ -9,7 +9,8 @@ This class allow user to connect with a wsswitch server.
 #### Constructor
 
 ```javascript
-let client = new Client(wsswitch_url) // default "wsswitch_url" value: wss://wsswitch.com
+// url is 'wss://wsswitch.com' by default
+let client = new Client(url);
 ```
 
 #### Methods
@@ -44,7 +45,7 @@ client.on(event, callback);
 
 ```javascript
 // message is a message instance
-// protocol is 'sump'bt default (only 'sump' is supported)
+// protocol is 'sump' by default (only 'sump' is supported)
 // version is '1.0' by default (only '1.0' is supported)
 // sendMessage throws an exception if message is not a message instance
 let messagePromise = client.sendMessage(message, protocol, version); 
