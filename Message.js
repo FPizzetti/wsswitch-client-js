@@ -8,7 +8,6 @@ class Message {
         this.type = options.type;
         this.destination = destination;
         this.echo = options.echo;
-        this.fullResponse = options.fullResponse;
         this.ackRequired = options.ackRequired;
         this.payload = payload;
     }
