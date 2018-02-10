@@ -18,7 +18,8 @@ let client = new Client(url);
 ##### connect
 
 ```javascript
-// pass entity login ans password as parameters
+// login is the wsswitch entity login
+// password is the wsswitch entity password
 // connect returns a promise that will resolve if connection succeed or reject of the connection fail
 // connect throws an exception if connection is already open
 let connectPromise = client.connect(login, password); 
